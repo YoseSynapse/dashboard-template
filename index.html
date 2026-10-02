@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Makes the layout scale correctly on phones. Required for the
+       responsive design in css/styles.css to kick in. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V.R World Media — Posting Dashboard</title>
+
+  <!-- This demo has ZERO dependencies: no frameworks, no CDNs, no build step.
+       Just these two local files plus js/data.js. -->
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- ================= HEADER + NAV ================= -->
+  <header class="site-header">
+    <div class="brand">
+      <!-- "What you envision is the real world." -->
+      <span class="brand-logo">V.R</span>
+      <div class="brand-text">
+        <h1>V.R World Media</h1>
+        <p class="tagline">Posting Dashboard</p>
+      </div>
+    </div>
+
+    <!-- Tab buttons. js/app.js listens for clicks and calls showView().
+         data-view must match the id of the matching <section> minus
+"view-". -->
+    <nav class="tabs" aria-label="Dashboard views">
+      <button class="tab active" data-view="upload">Upload</button>
+      <button class="tab" data-view="compose">Compose</button>
+      <button class="tab" data-view="queue">Queue</button>
+      <button class="tab" data-view="approvals">Approvals</button>
+      <button class="tab" data-view="audit">Audit Log</button>
+    </nav>
+  </header>
+
+  <!-- ================= VIEWS ================= -->
+  <!-- Only one <section> is visible at a time. app.js toggles the
+       "active" class. Every view's content is rendered into the
+       matching container div by its render function. -->
+  <main class="content">
+
+    <section id="view-upload" class="view active" aria-label="Upload media">
+      <div id="upload-root"><!-- rendered by renderUpload() --></div>
+    </section>
+
+    <section id="view-compose" class="view" aria-label="Compose post">
+      <div id="compose-root"><!-- rendered by renderCompose() --></div>
+    </section>
+
+    <section id="view-queue" class="view" aria-label="Scheduled queue">
+      <div id="queue-root"><!-- rendered by renderQueue() --></div>
+    </section>
+
+    <section id="view-approvals" class="view" aria-label="Approvals">
+      <div id="approvals-root"><!-- rendered by renderApprovals() --></div>
+    </section>
+
+    <section id="view-audit" class="view" aria-label="Audit log">
+      <div id="audit-root"><!-- rendered by renderAudit() --></div>
+    </section>
+
+  </main>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="site-footer">
+    <p>Demo build — timed auto-posting needs the Phase-2 backend.</p>
+  </footer>
+
+  <!-- Load order matters: data.js defines COMPOSER_DATA, app.js uses it.
+       "defer" waits until the HTML is parsed, then runs in order. -->
+  <script src="js/data.js" defer></script>
+  <script src="js/app.js" defer></script>
+</body>
+</html>
+
