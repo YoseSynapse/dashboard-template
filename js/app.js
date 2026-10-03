@@ -906,7 +906,7 @@ function renderQueue() {
   });
 
   let html =
-    '<div class="banner warn">GitHub Pages can\'t auto-post — it\'sstatic hosting with no ' +
+    '<div class="banner warn">GitHub Pages can\'t auto-post — it\'s static hosting with no ' +
     'always-on process. The Phase-2 backend fires these at the right time; this queue is its waiting room.</div>';
 
   if (!queued.length) {
