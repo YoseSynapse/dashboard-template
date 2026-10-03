@@ -887,7 +887,7 @@ esc(p.rejectionNote) : '') + '</div>' +
    `approved` posts set to publish-now. Each card shows a countdown-ish
    "scheduled for" label and a Cancel button (sends it back to draft).
 
-   HONEST NOTE: GitHub Pages is static hosting — it cannot run a timer
+   HONEST NOTE: GitHub Pages is  static hosting — it cannot run a timer
    that fires posts at the right time. The Phase-2 Python backend owns
    the scheduler; this view is the human-readable face of that queue.
    ===================================================================== */
