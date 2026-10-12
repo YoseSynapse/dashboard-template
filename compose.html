@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compose — V.R World Media</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+
+<h1>Compose post</h1>
+
+<div class="card">
+  <h3>Media</h3>
+  <div id="mediaPreview"></div>
+  <label for="mediaIdInput">media_id (from upload)</label>
+  <input type="text" id="mediaIdInput" placeholder="upload a file first">
+</div>
+
+<div class="card">
+  <h3>Brand &amp; accounts</h3>
+  <div class="banner info" id="brandHintBanner"><span id="brandHint"></span></div>
+  <label>Brand</label>
+  <div class="checkrow" id="brandPick"></div>
+  <label>Accounts (platforms)</label>
+  <div id="accountPick"></div>
+</div>
+
+<div class="card">
+  <h3>Title</h3>
+  <input type="text" id="titleInput" placeholder="Video title">
+  <div class="limit-hint" id="titleCounter"></div>
+  <button class="btn" id="formulaBtn">📋 45 title formulas</button>
+  <div class="picker-panel" id="formulaPanel">
+    <div class="picker-tabs" id="formulaTabs"></div>
+    <div id="formulaList"></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Caption</h3>
+  <textarea id="captionInput" placeholder="Caption — first line is the hook (what shows in search results)"></textarea>
+  <div class="limit-hint" id="captionCounter"></div>
+  <button class="btn" id="hookBtn">🪝 Hook templates</button>
+  <div class="picker-panel" id="hookPanel"><div id="hookList"></div></div>
+
+  <label for="hashtagInput">Hashtags (comma-separated)</label>
+  <input type="text" id="hashtagInput" placeholder="#riskmanagement, #forex, ...">
+  <div class="limit-hint" id="hashtagCounter"></div>
+</div>
+
+<div class="card">
+  <h3>Thumbnail notes</h3>
+  <textarea id="thumbNotes" placeholder="Notes for the thumbnail designer (you): composition, text, colors…"></textarea>
+  <label>Thumbnail checklist — check off as you plan it (adds to notes)</label>
+  <div id="thumbChecklist"></div>
+</div>
+
+<div class="card" id="heistBox" style="display:none">
+  <h3>Heist compliance</h3>
+  <label class="check"><input type="checkbox" id="conceptCheck">
+    <span class="t"><strong>Required:</strong> this post explicitly labels concept/fan art as <code>[CONCEPT]</code> or <code>[RUMOR]</code> where needed.</span></label>
+</div>
+
+<div class="card">
+  <h3>Timing</h3>
+  <div class="checkrow">
+    <label class="check"><input type="radio" name="timing" value="now" checked><span class="t">Publish now (scheduler fires on next tick)</span></label>
+    <label class="check"><input type="radio" name="timing" value="schedule"><span class="t">Schedule</span></label>
+  </div>
+  <div id="scheduleBox" style="display:none">
+    <label for="schedInput">Scheduled time</label>
+    <input type="datetime-local" id="schedInput">
+    <p class="small">YouTube uses native publishAt; TikTok, X and Instagram publish when the scheduler fires at/after this time.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Compliance check (live)</h3>
+  <div id="complianceOut"><p class="small">Start typing to check title, caption and hashtags against the brand rules.</p></div>
+</div>
+
+<div class="card">
+  <button class="btn primary big" id="saveBtn">Save draft</button>
+  <button class="btn good big" id="submitBtn" disabled>Submit for approval</button>
+  <button class="btn danger" id="deleteDraftBtn" style="display:none;margin-top:8px">Delete draft</button>
+  <div id="postMsg"></div>
+</div>
+
+<footer>V.R World Media · owned publishing hub · localhost only</footer>
+
+<script src="app.js"></script>
+<script>
+renderNav("compose.html");
+
+const qs = new URLSearchParams(location.search);
+let CDATA = null, ACCOUNTS = [];
+let SEL_BRAND = qs.get("brand") || "";
+let PRE_ACCOUNTS = (qs.get("account_ids") || "").split(",").filter(Boolean);
+let DRAFT_ID = null;
+let DRAFT_STATUS = null;
+let SUBMITTED = false;
+let LAST_BLOCKS = [];
+
+const $ = (id) => document.getElementById(id);
+
+/* ---------- init ---------- */
+(async function init() {
+  CDATA = await getComposerData();
+  ACCOUNTS = await getAccounts();
+  const reopenId = qs.get("post_id");
+  if (reopenId) {
+    await loadDraft(reopenId);
+  } else if (qs.get("media_id")) {
+    $("mediaIdInput").value = qs.get("media_id");
+  }
+  renderMediaPreview();
+  renderBrandPick();
+  renderChecklist();
+  renderHookPicker();
+  $("mediaIdInput").oninput = renderMediaPreview;
+  document.querySelectorAll('input[name="timing"]').forEach(r => {
+    r.onchange = () => { $("scheduleBox").style.display = r.value === "schedule" && r.checked ? "block" : "none"; };
+  });
+  ["titleInput", "captionInput", "hashtagInput"].forEach(id => {
+    $(id).addEventListener("input", debounce(runChecks, 600));
+  });
+  $("formulaBtn").onclick = () => { $("formulaPanel").classList.toggle("open"); renderFormulaPicker(); };
+  $("hookBtn").onclick = () => $("hookPanel").classList.toggle("open");
+  $("conceptCheck") && ($("conceptCheck").onchange = runChecks);
+  $("saveBtn").onclick = saveDraft;
+  $("submitBtn").onclick = submitForApproval;
+  $("deleteDraftBtn").onclick = deleteLoadedDraft;
+  updateDeleteBtn();
+  runChecks();
+})();
+
+function renderMediaPreview() {
+  const fname = qs.get("filename") || "";
+  const mid = $("mediaIdInput").value.trim();
+  if (fname) {
+    $("mediaPreview").innerHTML = mediaPreviewHTML(fname) +
+      '<p class="small">media_id: <strong>' + esc(mid) + "</strong></p>";
+  } else {
+    $("mediaPreview").innerHTML = mid
+      ? '<p class="small">media_id: <strong>' + esc(mid) + "</strong> (no preview filename passed)</p>"
+      : '<p class="small">No media selected. Upload a file first.</p>';
+  }
+}
+
+function selectedAccounts() {
+  return [...document.querySelectorAll(".caccount:checked")].map(c => c.value);
+}
+function selectedPlatforms() {
+  const ids = selectedAccounts();
+  return [...new Set(ACCOUNTS.filter(a => ids.includes(String(a.id))).map(a => a.platform))];
+}
+
+/* ---------- brand & accounts ---------- */
+function renderBrandPick() {
+  const brands = [...new Set(ACCOUNTS.map(a => a.brand))].filter(b => BRANDS[b]);
+  const options = brands.length ? brands : Object.keys(BRANDS);
+  if (!options.includes(SEL_BRAND)) SEL_BRAND = options[0] || "";
+  $("brandPick").innerHTML = options.map(b =>
+    '<label class="check"><input type="radio" name="cbrand" value="' + esc(b) + '"' + (b === SEL_BRAND ? " checked" : "") + ">" +
+    '<span class="t"><strong>' + esc(brandLabel(b)) + "</strong> " + esc(BRANDS[b].handle) + "</span></label>"
+  ).join("");
+  document.querySelectorAll('input[name="cbrand"]').forEach(r => {
+    r.onchange = () => { SEL_BRAND = r.value; renderAccountPick(); renderFormulaPicker(); runChecks(); };
+  });
+  const pre = PRE_ACCOUNTS;
+  renderAccountPick(pre);
+  updateBrandUI();
+}
+function renderAccountPick(pre) {
+  const list = ACCOUNTS.filter(a => a.brand === SEL_BRAND);
+  const el = $("accountPick");
+  if (!list.length) { el.innerHTML = '<p class="small">No accounts for this brand. Add one on the Home page.</p>'; return; }
+  el.innerHTML = list.map(a =>
+    '<label class="check"><input type="checkbox" class="caccount" value="' + esc(a.id) + '"' +
+    ((pre || []).includes(String(a.id)) ? " checked" : "") + ">" +
+    '<span class="t"><strong>' + esc(a.display_name || a.id) + "</strong> — " + esc(platformLabel(a.platform)) + "</span></label>"
+  ).join("");
+  el.querySelectorAll(".caccount").forEach(c => c.onchange = runChecks);
+}
+function updateBrandUI() {
+  $("brandHint").textContent = BRAND_HINTS[SEL_BRAND] || "";
+  const isHeist = SEL_BRAND === "heist";
+  $("heistBox").style.display = isHeist ? "block" : "none";
+  renderFormulaPicker();
+}
+
+/* ---------- platform limit hints + counters ---------- */
+function renderCounters() {
+  const limits = (CDATA && CDATA.platform_limits) || {};
+  const plats = selectedPlatforms();
+  // caption
+  const capLen = $("captionInput").value.length;
+  const capMax = Math.min(...plats.map(p => (limits[p] || {}).caption_max || Infinity));
+  const cc = $("captionCounter");
+  cc.textContent = "Caption: " + capLen + (capMax !== Infinity ? " / " + capMax + " chars (" + plats.join(", ") + ")" : " chars");
+  cc.className = "limit-hint" + (capMax !== Infinity && capLen > capMax ? " over" : (capMax !== Infinity && capLen > capMax * 0.9 ? " warn" : ""));
+  // title
+  const tLen = $("titleInput").value.length;
+  const tMax = (limits.youtube || {}).title_max || 100;
+  const tc = $("titleCounter");
+  tc.textContent = "Title: " + tLen + " / " + tMax + " chars (YouTube)";
+  tc.className = "limit-hint" + (tLen > tMax ? " over" : tLen > tMax * 0.9 ? " warn" : "");
+  // hashtags
+  const tags = parseTags();
+  const hc = $("hashtagCounter");
+  let note = tags.length + " hashtag" + (tags.length === 1 ? "" : "s");
+  let cls = "limit-hint";
+  if (plats.includes("tiktok")) {
+    const max = ((limits.tiktok || {}).hashtags_max) || 100;
+    note += " · TikTok max " + max;
+    if (tags.length > max) { note += " — OVER (block)"; cls += " over"; }
+  }
+  if (plats.includes("x")) {
+    const rec = ((limits.x || {}).hashtags_recommended_max) || 4;
+    note += " · X recommended ≤ " + rec;
+    if (tags.length > rec) { note += " — over (warning)"; cls += " warn"; }
+  }
+  if (plats.includes("youtube")) note += " · YouTube: 3–5 in description max";
+  hc.textContent = note;
+  hc.className = cls;
+}
+function parseTags() {
+  return $("hashtagInput").value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+}
+
+/* ---------- pickers ---------- */
+function renderFormulaPicker() {
+  if (!$("formulaPanel").classList.contains("open")) return;
+  const all = (CDATA && CDATA.title_formulas) || [];
+  const tabs = $("formulaTabs");
+  const tabBrands = [["_all", "All 45"], ...Object.keys(FORMULA_BRAND_RANGES).map(b => [b, brandLabel(b)])];
+  tabs.innerHTML = tabBrands.map(([b, l]) => '<button data-b="' + b + '">' + esc(l) + "</button>").join("");
+  const list = $("formulaList");
+  function show(b) {
+    const items = b === "_all" ? all : formulasFor(b, all);
+    list.innerHTML = items.map(t =>
+      '<button class="picker-item" data-t="' + esc(t) + '">' + esc(t) + "</button>").join("");
+    list.querySelectorAll(".picker-item").forEach(btn => {
+      btn.onclick = () => insertAtCursor($("titleInput"), btn.dataset.t);
+    });
+    tabs.querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.b === b));
+  }
+  tabs.querySelectorAll("button").forEach(x => x.onclick = () => show(x.dataset.b));
+  show(SEL_BRAND && FORMULA_BRAND_RANGES[SEL_BRAND] ? SEL_BRAND : "_all");
+}
+function renderHookPicker() {
+  const hooks = (CDATA && CDATA.hook_templates) || [];
+  $("hookList").innerHTML = hooks.map(h =>
+    '<button class="picker-item" data-h="' + esc(h) + '">' + esc(h) + "</button>").join("");
+  $("hookList").querySelectorAll(".picker-item").forEach(btn => {
+    btn.onclick = () => insertAtCursor($("captionInput"), btn.dataset.h + " ");
+  });
+}
+function insertAtCursor(field, text) {
+  const s = field.selectionStart == null ? field.value.length : field.selectionStart;
+  const e = field.selectionEnd == null ? field.value.length : field.selectionEnd;
+  field.value = field.value.slice(0, s) + text + field.value.slice(e);
+  field.focus();
+  field.selectionStart = field.selectionEnd = s + text.length;
+  field.dispatchEvent(new Event("input"));
+}
+
+/* ---------- thumbnail checklist ---------- */
+function renderChecklist() {
+  const items = (CDATA && CDATA.thumbnail_checklist) || [];
+  const el = $("thumbChecklist");
+  el.innerHTML = items.map((t, i) =>
+    '<label class="check"><input type="checkbox" class="tcheck" data-i="' + i + '">' +
+    '<span class="t">' + esc(t) + "</span></label>").join("");
+  el.querySelectorAll(".tcheck").forEach(cb => {
+    cb.onchange = () => {
+      const line = "- [x] " + items[Number(cb.dataset.i)];
+      const ta = $("thumbNotes");
+      if (cb.checked) {
+        if (!ta.value.includes(line)) ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + line;
+      } else {
+        ta.value = ta.value.split("\n").filter(l => l !== line).join("\n");
+      }
+    };
+  });
+}
+
+/* ---------- live compliance ---------- */
+async function runChecks() {
+  renderCounters();
+  const title = $("titleInput").value;
+  const caption = $("captionInput").value;
+  const tags = parseTags();
+  const out = $("complianceOut");
+  if (!SEL_BRAND) { out.innerHTML = '<p class="small">Pick a brand first.</p>'; return; }
+  let blocks = [], warnings = [];
+  try {
+    const r = await post("/api/compliance/check", { brand: SEL_BRAND, title, caption, hashtags: tags });
+    blocks = r.blocks || []; warnings = r.warnings || [];
+  } catch (e) {
+    out.innerHTML = '<div class="banner amber">Compliance service unreachable: ' + esc(e.message) + "</div>";
+  }
+  LAST_BLOCKS = blocks;
+  let html = "";
+  if (blocks.length) {
+    html += '<div class="banner red"><span class="rule">⛔ ' + blocks.length + " block" + (blocks.length > 1 ? "s" : "") + " — submit disabled:</span><ul class='findings'>" +
+      blocks.map(b => "<li><strong>" + esc(b.rule || "") + ":</strong> " + esc(b.message || "") + "</li>").join("") + "</ul></div>";
+  }
+  if (warnings.length) {
+    html += '<div class="banner amber"><span class="rule">⚠️ ' + warnings.length + " warning" + (warnings.length > 1 ? "s" : "") + " — submit still allowed:</span><ul class='findings'>" +
+      warnings.map(w => "<li><strong>" + esc(w.rule || "") + ":</strong> " + esc(w.message || "") + "</li>").join("") + "</ul></div>";
+  }
+  if (!blocks.length && !warnings.length && (title || caption)) {
+    html += '<div class="banner green">✔ Clean — no blocks or warnings.</div>';
+  }
+  if (!title && !caption) html = '<p class="small">Start typing to check title, caption and hashtags against the brand rules.</p>';
+  out.innerHTML = html;
+  updateSubmitState();
+}
+function updateSubmitState() {
+  const heistBlock = SEL_BRAND === "heist" && !($("conceptCheck") && $("conceptCheck").checked);
+  $("submitBtn").disabled = !DRAFT_ID || SUBMITTED || LAST_BLOCKS.length > 0 || heistBlock;
+  $("saveBtn").textContent = DRAFT_ID ? "Save as new draft" : "Save draft";
+}
+function updateDeleteBtn() {
+  const show = !!DRAFT_ID && !SUBMITTED && DRAFT_STATUS === "draft";
+  $("deleteDraftBtn").style.display = show ? "" : "none";
+}
+
+/* ---------- reopen saved draft (?post_id=) ---------- */
+async function loadDraft(postId) {
+  const msg = $("postMsg");
+  try {
+    const p = await get("/api/posts/" + encodeURIComponent(postId));
+    DRAFT_ID = p.id;
+    SUBMITTED = false;
+    $("mediaIdInput").value = p.media_id != null ? String(p.media_id) : "";
+    SEL_BRAND = postBrand(p) || SEL_BRAND;
+    PRE_ACCOUNTS = p.account_id != null ? [String(p.account_id)] : [];
+    $("titleInput").value = p.title || "";
+    $("captionInput").value = p.caption || "";
+    $("hashtagInput").value = (p.hashtags || []).join(", ");
+    $("thumbNotes").value = p.thumbnail_notes || "";
+    if (p.scheduled_at) {
+      document.querySelector('input[name="timing"][value="schedule"]').checked = true;
+      $("scheduleBox").style.display = "block";
+      $("schedInput").value = String(p.scheduled_at).slice(0, 16);
+    }
+    if (p.labels_concept_art && $("conceptCheck")) $("conceptCheck").checked = true;
+    const st = p.status || "draft";
+    DRAFT_STATUS = st;
+    msg.innerHTML = st === "draft"
+      ? '<div class="banner info">Reopened draft <strong>post #' + esc(String(p.id)) + "</strong> — review and submit.</div>"
+      : '<div class="banner amber">Post #' + esc(String(p.id)) + " is already <strong>" + esc(st) +
+        "</strong> — saving here creates a new draft.</div>";
+  } catch (e) {
+    DRAFT_ID = null;
+    DRAFT_STATUS = null;
+    msg.innerHTML = '<div class="banner red">⚠️ Could not load draft #' + esc(String(postId)) + ": " +
+      esc(e.message) + "</div>";
+  }
+  updateSubmitState();
+  updateDeleteBtn();
+}
+
+/* ---------- save & submit ---------- */
+async function saveDraft() {
+  const msg = $("postMsg");
+  msg.innerHTML = "";
+  const media_id = $("mediaIdInput").value.trim();
+  const account_ids = selectedAccounts();
+  if (!media_id) { msg.innerHTML = '<p class="error">media_id is required — upload a file first.</p>'; return; }
+  if (!account_ids.length) { msg.innerHTML = '<p class="error">Pick at least one account.</p>'; return; }
+  if (!$("titleInput").value.trim()) { msg.innerHTML = '<p class="error">Title is required.</p>'; return; }
+  let scheduled_at = null;
+  const timing = document.querySelector('input[name="timing"]:checked').value;
+  if (timing === "schedule") {
+    const v = $("schedInput").value;
+    if (!v) { msg.innerHTML = '<p class="error">Pick a scheduled time, or choose “Publish now”.</p>'; return; }
+    scheduled_at = new Date(v).toISOString();
+  }
+  const body = {
+    media_id,
+    account_ids,
+    title: $("titleInput").value.trim(),
+    caption: $("captionInput").value,
+    hashtags: parseTags(),
+    thumbnail_notes: $("thumbNotes").value,
+    scheduled_at,
+    labels_concept_art: SEL_BRAND === "heist" ? !!($("conceptCheck") && $("conceptCheck").checked) : false
+  };
+  $("saveBtn").disabled = true;
+  try {
+    const postData = await post("/api/posts", body);
+    const created = (postData.posts && postData.posts[0]) || postData;
+    DRAFT_ID = created.id;
+    DRAFT_STATUS = created.status || "draft";
+    SUBMITTED = false;
+    msg.innerHTML = '<div class="banner green">Draft saved — post #' + esc(String(DRAFT_ID)) + " (" + esc(created.status || "draft") + "). Now review compliance and submit.</div>";
+    await runChecks();
+  } catch (e) { msg.innerHTML = '<p class="error">' + esc(e.message) + "</p>"; }
+  $("saveBtn").disabled = false;
+  updateSubmitState();
+  updateDeleteBtn();
+}
+
+async function submitForApproval() {
+  if (!DRAFT_ID) return;
+  const msg = $("postMsg");
+  $("submitBtn").disabled = true;
+  try {
+    const r = await post("/api/posts/" + encodeURIComponent(DRAFT_ID) + "/submit", {});
+    const errs = r.errors || r.blocks || [];
+    if (errs.length) {
+      msg.innerHTML = '<div class="banner red"><span class="rule">⛔ Submit blocked — staying on draft:</span><ul class="findings">' +
+        errs.map(e => "<li><strong>" + esc(e.rule || "") + ":</strong> " + esc(e.message || "") + "</li>").join("") +
+        "</ul></div>";
+      await runChecks();
+    } else {
+      const warnCount = (r.warnings || []).length;
+      SUBMITTED = true;
+      msg.innerHTML = '<div class="banner green">✔ Submitted for approval — post #' + esc(String(DRAFT_ID)) +
+        " is now <strong>pending_approval</strong>" + (warnCount ? " with " + warnCount + " warning(s) on file" : "") +
+        '. Review it in <a href="approve.html">Approve</a>.</div>';
+      $("submitBtn").disabled = true;
+    }
+  } catch (e) {
+    // 422 from /submit carries {errors:[...]} — render the blocks, not raw JSON.
+    let html = '<p class="error">' + esc(e.message) + "</p>";
+    try {
+      const data = JSON.parse(e.message);
+      const errs = data.errors || data.blocks || [];
+      if (errs.length) {
+        html = '<div class="banner red"><span class="rule">⛔ Submit blocked — staying on draft:</span><ul class="findings">' +
+          errs.map(x => "<li><strong>" + esc(x.rule || "") + ":</strong> " + esc(x.message || "") + "</li>").join("") +
+          "</ul></div>";
+      }
+    } catch (_) { /* not JSON — keep the raw message */ }
+    msg.innerHTML = html;
+    await runChecks();
+  }
+  updateSubmitState();
+  updateDeleteBtn();
+}
+
+async function deleteLoadedDraft() {
+  if (!DRAFT_ID) return;
+  if (!confirm("Delete this draft? This cannot be undone.")) return;
+  const msg = $("postMsg");
+  try {
+    await del("/api/posts/" + encodeURIComponent(DRAFT_ID));
+    DRAFT_ID = null;
+    DRAFT_STATUS = null;
+    SUBMITTED = false;
+    $("mediaIdInput").value = "";
+    $("titleInput").value = "";
+    $("captionInput").value = "";
+    $("hashtagInput").value = "";
+    $("thumbNotes").value = "";
+    $("schedInput").value = "";
+    document.querySelector('input[name="timing"][value="now"]').checked = true;
+    $("scheduleBox").style.display = "none";
+    if ($("conceptCheck")) $("conceptCheck").checked = false;
+    renderMediaPreview();
+    msg.innerHTML = '<div class="banner green">✔ Draft deleted.</div>';
+  } catch (e) {
+    msg.innerHTML = '<p class="error">Delete failed: ' + esc(e.message) + "</p>";
+  }
+  updateSubmitState();
+  updateDeleteBtn();
+}
+</script>
+</body>
+</html>
