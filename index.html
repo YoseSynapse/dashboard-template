@@ -1,78 +1,275 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <!-- Makes the layout scale correctly on phones. Required for the
-       responsive design in css/styles.css to kick in. -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>V.R World Media — Posting Dashboard</title>
-
-  <!-- This demo has ZERO dependencies: no frameworks, no CDNs, no build step.
-       Just these two local files plus js/data.js. -->
-  <link rel="stylesheet" href="css/styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>V.R World Media — Posting Dashboard</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
+<nav class="nav" id="nav"></nav>
 
-  <!-- ================= HEADER + NAV ================= -->
-  <header class="site-header">
-    <div class="brand">
-      <!-- "What you envision is the real world." -->
-      <span class="brand-logo">V.R</span>
-      <div class="brand-text">
-        <h1>V.R World Media</h1>
-        <p class="tagline">Posting Dashboard</p>
-      </div>
+<h1>Posting Dashboard</h1>
+<p class="small">Upload once → compose → approve → schedule or publish. Nothing posts without approval.</p>
+
+<h2>Queue overview</h2>
+<div id="statusCounts" class="stat-grid"></div>
+
+<h2>Posts</h2>
+<div class="card tight">
+  <div class="row">
+    <div>
+      <label for="fBrand" style="margin-top:0">Brand</label>
+      <select id="fBrand"><option value="">All brands</option></select>
     </div>
+    <div>
+      <label for="fStatus" style="margin-top:0">Status</label>
+      <select id="fStatus"><option value="">All statuses</option></select>
+    </div>
+  </div>
+</div>
+<div id="postsList" class="grid"></div>
 
-    <!-- Tab buttons. js/app.js listens for clicks and calls showView().
-         data-view must match the id of the matching <section> minus
-"view-". -->
-    <nav class="tabs" aria-label="Dashboard views">
-      <button class="tab active" data-view="upload">Upload</button>
-      <button class="tab" data-view="compose">Compose</button>
-      <button class="tab" data-view="queue">Queue</button>
-      <button class="tab" data-view="approvals">Approvals</button>
-      <button class="tab" data-view="audit">Audit Log</button>
-    </nav>
-  </header>
+<h2>Recent audit events</h2>
+<div id="auditList" class="grid"></div>
 
-  <!-- ================= VIEWS ================= -->
-  <!-- Only one <section> is visible at a time. app.js toggles the
-       "active" class. Every view's content is rendered into the
-       matching container div by its render function. -->
-  <main class="content">
+<h2>X spend meter</h2>
+<div class="card" id="xSpend"><p class="small">Loading…</p></div>
 
-    <section id="view-upload" class="view active" aria-label="Upload media">
-      <div id="upload-root"><!-- rendered by renderUpload() --></div>
-    </section>
+<h2>Connected accounts</h2>
+<div id="accountsList" class="grid cols2"></div>
 
-    <section id="view-compose" class="view" aria-label="Compose post">
-      <div id="compose-root"><!-- rendered by renderCompose() --></div>
-    </section>
+<h2>YouTube</h2>
+<div class="card" id="ytPanel"><p class="small">Loading…</p></div>
 
-    <section id="view-queue" class="view" aria-label="Scheduled queue">
-      <div id="queue-root"><!-- rendered by renderQueue() --></div>
-    </section>
+<div class="card">
+  <h3>Add account</h3>
+  <div class="row">
+    <div><label for="newBrand" style="margin-top:0">Brand</label>
+      <select id="newBrand">
+        <option value="quiet_position">Quiet Position</option>
+        <option value="the_odds_board">The Odds Board</option>
+        <option value="heist">Heist</option>
+        <option value="jose_personal">Jose (personal)</option>
+      </select></div>
+    <div><label for="newPlatform" style="margin-top:0">Platform</label>
+      <select id="newPlatform">
+        <option value="tiktok">TikTok</option>
+        <option value="x">X</option>
+        <option value="instagram">Instagram</option>
+        <option value="youtube">YouTube</option>
+      </select></div>
+    <div style="flex:1;min-width:180px"><label for="newName" style="margin-top:0">Display name</label>
+      <input type="text" id="newName" placeholder="e.g. @facelesswicks"></div>
+  </div>
+  <button class="btn primary" id="addAccountBtn">Add account</button>
+  <div id="addAccountMsg"></div>
+  <p class="small">OAuth tokens are connected per account via the backend endpoints. Tokens are encrypted at rest and never shown here.</p>
+</div>
 
-    <section id="view-approvals" class="view" aria-label="Approvals">
-      <div id="approvals-root"><!-- rendered by renderApprovals() --></div>
-    </section>
+<footer>V.R World Media · owned publishing hub · localhost only</footer>
 
-    <section id="view-audit" class="view" aria-label="Audit log">
-      <div id="audit-root"><!-- rendered by renderAudit() --></div>
-    </section>
+<script src="app.js"></script>
+<script>
+renderNav("index.html");
+let ALL_POSTS = [];
 
-  </main>
+async function load() {
+  try {
+    const [posts, audit, spend] = await Promise.all([
+      get("/api/posts"), get("/api/audit"), get("/api/x-spend")
+    ]);
+    ALL_POSTS = posts || [];
+    renderCounts(ALL_POSTS);
+    renderFilters();
+    renderPosts();
+    renderAudit(audit || []);
+    renderSpend(spend || {});
+  } catch (e) { showError("statusCounts", e); }
+  loadAccounts();
+  loadYouTube();
+}
 
-  <!-- ================= FOOTER ================= -->
-  <footer class="site-footer">
-    <p>Demo build — timed auto-posting needs the Phase-2 backend.</p>
-  </footer>
+function renderCounts(posts) {
+  const counts = {};
+  STATUSES.forEach(s => counts[s] = 0);
+  posts.forEach(p => { if (counts[p.status] !== undefined) counts[p.status]++; });
+  document.getElementById("statusCounts").innerHTML = STATUSES.map(s =>
+    '<div class="stat"><div class="n">' + counts[s] + '</div><div class="l">' + esc(s.replace(/_/g, " ")) + "</div></div>"
+  ).join("");
+}
 
-  <!-- Load order matters: data.js defines COMPOSER_DATA, app.js uses it.
-       "defer" waits until the HTML is parsed, then runs in order. -->
-  <script src="js/data.js" defer></script>
-  <script src="js/app.js" defer></script>
+function renderFilters() {
+  const bSel = document.getElementById("fBrand");
+  bSel.innerHTML = '<option value="">All brands</option>' +
+    Object.keys(BRANDS).map(b => '<option value="' + b + '">' + esc(brandLabel(b)) + "</option>").join("");
+  const sSel = document.getElementById("fStatus");
+  sSel.innerHTML = '<option value="">All statuses</option>' +
+    STATUSES.map(s => '<option value="' + s + '">' + esc(s.replace(/_/g, " ")) + "</option>").join("");
+  bSel.onchange = renderPosts; sSel.onchange = renderPosts;
+}
+
+function renderPosts() {
+  const b = document.getElementById("fBrand").value;
+  const s = document.getElementById("fStatus").value;
+  const list = ALL_POSTS.filter(p =>
+    (!b || postBrand(p) === b) && (!s || p.status === s)
+  ).slice(0, 30);
+  const el = document.getElementById("postsList");
+  if (!list.length) { el.innerHTML = '<p class="small">No posts match.</p>'; return; }
+  el.innerHTML = list.map(p => {
+    const card = '<div class="card tight"><div class="row spread"><div>' +
+      "<strong>" + esc(p.title || "(untitled)") + "</strong><br>" +
+      '<span class="small">' + esc(brandLabel(postBrand(p))) + " · " + esc(postPlatforms(p).map(platformLabel).join(", ") || "—") +
+      " · scheduled: " + fmtDate(p.scheduled_at) + "</span>" +
+      '</div><div>' + statusPill(p.status) + "</div></div></div>";
+    // drafts reopen in the composer for editing/submission; drafts can be deleted
+    if (p.status !== "draft") return card;
+    return '<a class="post-link" href="compose.html?post_id=' + encodeURIComponent(p.id) + '">' + card + "</a>" +
+      '<div style="text-align:right;margin:-6px 0 12px"><button class="btn danger" data-del="' + p.id + '">Delete draft</button></div>';
+  }).join("");
+  el.querySelectorAll("[data-del]").forEach(b => {
+    b.onclick = () => deleteDraft(Number(b.dataset.del));
+  });
+}
+
+async function deleteDraft(id) {
+  if (!confirm("Delete this draft? This cannot be undone.")) return;
+  try {
+    await del("/api/posts/" + id);
+    ALL_POSTS = ALL_POSTS.filter(p => p.id !== id);
+    renderCounts(ALL_POSTS);
+    renderPosts();
+  } catch (e) {
+    document.getElementById("postsList").insertAdjacentHTML("afterbegin",
+      '<div class="banner red">⚠️ Delete failed: ' + esc(e.message) + "</div>");
+  }
+}
+
+function renderAudit(events) {
+  const el = document.getElementById("auditList");
+  const recent = events.slice(0, 8);
+  if (!recent.length) { el.innerHTML = '<p class="small">No audit events yet.</p>'; return; }
+  el.innerHTML = '<div class="card tight"><div class="wrap"><table>' +
+    "<tr><th>When</th><th>Event</th><th>Detail</th></tr>" +
+    recent.map(a =>
+      "<tr><td class='small'>" + fmtDate(a.created_at) + "</td><td>" + esc(a.event || "") + "</td><td class='small'>" +
+      esc(a.detail || "") + "</td></tr>"
+    ).join("") + "</table></div></div>";
+}
+
+function renderSpend(spend) {
+  const el = document.getElementById("xSpend");
+  const usd = Number(spend.estimated_usd || 0);
+  const posts = Number(spend.posts || 0);
+  const links = Number(spend.link_posts || 0);
+  const pct = posts ? Math.min(100, Math.round((links / posts) * 100)) : 0;
+  el.innerHTML =
+    '<div class="row spread"><div><strong>' + esc(spend.month || "this month") + "</strong></div>" +
+    '<div style="font-size:1.4rem;font-weight:700">$' + usd.toFixed(2) + "</div></div>" +
+    '<p class="small">' + posts + " X posts · " + links + " link posts ($0.20 each vs $0.015 — link posts cost ~13× more)</p>" +
+    '<div class="meter"><div style="width:' + pct + '%"></div></div>' +
+    '<p class="small">Link-post share: ' + pct + "% · route links through the bio/landing page to stay cheap.</p>";
+}
+
+async function loadAccounts() {
+  const el = document.getElementById("accountsList");
+  try {
+    const accs = await getAccounts(true);
+    if (!accs.length) { el.innerHTML = '<p class="small">No accounts connected yet. Add one below — you handle OAuth logins yourself.</p>'; return; }
+    el.innerHTML = accs.map(a =>
+      '<div class="card tight"><strong>' + esc(a.display_name || brandLabel(a.brand)) + "</strong><br>" +
+      '<span class="small">' + esc(brandLabel(a.brand)) + " · " + esc(platformLabel(a.platform)) + "</span></div>"
+    ).join("");
+  } catch (e) { el.innerHTML = '<p class="error">' + esc(e.message) + "</p>"; }
+}
+
+async function loadYouTube() {
+  const el = document.getElementById("ytPanel");
+  try {
+    const s = await get("/api/youtube/status");
+    let html = "";
+    if (!s.client_secret_present) {
+      html += '<div class="banner red">⚠️ <strong>client_secret.json is missing.</strong> ' +
+        'Drop it into the phase2 folder (next to run.bat), restart the dashboard, then connect each brand channel below. ' +
+        'Steps: WINDOWS_SETUP.md → “Connect YouTube”.</div>';
+    }
+    const q = s.quota || {};
+    const used = Number(q.units_used || 0), cap = Number(q.cap || 10000);
+    const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0;
+    html += '<div class="row spread"><div><strong>Daily API quota</strong> <span class="small">' +
+      esc(String(q.date || "")) + '</span></div>' +
+      '<div style="font-size:1.2rem;font-weight:700">' + used.toLocaleString() + " / " + cap.toLocaleString() + " units</div></div>" +
+      '<div class="meter"><div style="width:' + pct + '%"></div></div>' +
+      '<p class="small">' + Number(q.uploads_remaining || 0) + " uploads left today (each upload = 1,600 units). Testing-mode cap: 10,000 units/day.</p>";
+    const accs = (s.accounts || []);
+    if (!accs.length) {
+      html += '<p class="small">No YouTube accounts yet — add one per brand above (“Connected accounts” → Add account → YouTube), then connect it here.</p>';
+    } else {
+      html += accs.map(a => {
+        const label = esc(brandLabel(a.brand)) + (a.display_name ? " · " + esc(a.display_name) : "");
+        const chan = a.platform_user_id ? '<br><span class="small">Channel: <code>' + esc(a.platform_user_id) + "</code></span>" : "";
+        const pill = a.connected
+          ? '<span class="pill published">connected</span>'
+          : '<span class="pill failed">not connected</span>';
+        const btn = a.connected
+          ? '<button class="btn" onclick="ytDisconnect(' + a.id + ')">Disconnect</button>'
+          : (s.client_secret_present
+              ? '<button class="btn primary" onclick="ytConnect(' + a.id + ')">Connect YouTube</button>'
+              : "");
+        return '<div class="card tight"><div class="row spread"><div><strong>' + label + "</strong>" + chan +
+          '</div><div style="text-align:right">' + pill + '<div style="margin-top:6px">' + btn +
+          ' <button class="btn danger" onclick="ytDeleteAccount(' + a.id + ')">Delete</button></div></div></div></div>';
+      }).join("");
+    }
+    html += '<p class="small">Uploads default to <strong>private</strong> — flip visibility in YouTube Studio. Nothing publishes without approval.' +
+      (s.mock_adapters ? " <em>Mock mode is ON (VRWM_MOCK_ADAPTERS=1): publishes are simulated.</em>" : "") + "</p>";
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = '<p class="error">' + esc(e.message) + "</p>"; }
+}
+
+async function ytConnect(accountId) {
+  const el = document.getElementById("ytPanel");
+  try {
+    const r = await get("/api/youtube/auth-url?account_id=" + accountId);
+    window.location = r.auth_url; // Google consent → lands back on /api/youtube/callback
+  } catch (e) { el.insertAdjacentHTML("afterbegin", '<div class="banner red">⚠️ ' + esc(e.message) + "</div>"); }
+}
+
+async function ytDisconnect(accountId) {
+  if (!confirm("Disconnect this YouTube account? Stored tokens are deleted.")) return;
+  try {
+    await post("/api/youtube/disconnect", { account_id: accountId });
+    loadYouTube();
+  } catch (e) { showError("ytPanel", e); }
+}
+
+async function ytDeleteAccount(accountId) {
+  if (!confirm("Delete this account? This cannot be undone.")) return;
+  try {
+    await del("/api/accounts/" + accountId);
+    loadYouTube();
+  } catch (e) { showError("ytPanel", e); }
+}
+
+document.getElementById("addAccountBtn").onclick = async () => {
+  const msg = document.getElementById("addAccountMsg");
+  msg.innerHTML = "";
+  const body = {
+    brand: document.getElementById("newBrand").value,
+    platform: document.getElementById("newPlatform").value,
+    display_name: document.getElementById("newName").value.trim()
+  };
+  if (!body.display_name) { msg.innerHTML = '<p class="error">Display name is required.</p>'; return; }
+  try {
+    await post("/api/accounts", body);
+    msg.innerHTML = '<div class="banner green">Account added. Connect OAuth tokens per account via the backend endpoints.</div>';
+    document.getElementById("newName").value = "";
+    loadAccounts();
+  } catch (e) { msg.innerHTML = '<p class="error">' + esc(e.message) + "</p>"; }
+};
+
+load();
+</script>
 </body>
 </html>
-
