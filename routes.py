@@ -24,7 +24,7 @@ from .scheduler import load_adapter
 log = logging.getLogger("vrwm.routes")
 router = APIRouter()
 
-BRANDS = {"quiet_position", "the_odds_board", "heist", "jose_personal"}
+BRANDS = {"quiet_position", "the_odds_board", "heist", "jose_personal", "mh_outlanders"}
 PLATFORMS = {"tiktok", "x", "instagram", "youtube"}
 
 _URL_RE = re.compile(r"https?://|www\.")
@@ -100,6 +100,20 @@ def _get_post(db, post_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail="post not found")
     return row
+
+
+def _media_filename(db, media_id):
+    """Filename for a media id (None when the post has no media).
+
+    The Approve/Compose previews render from `filename`; _post_json only
+    carries media_id, so endpoints must attach this explicitly — without it
+    the Approve page reports 'No media attached.' for posts that DO have
+    media (fixed 2026-10-18 at Jose's direction).
+    """
+    if media_id is None:
+        return None
+    row = db.execute("SELECT filename FROM media WHERE id = ?", (media_id,)).fetchone()
+    return row["filename"] if row is not None else None
 
 
 def _audit(db, post_id, account_id, event, detail=None):
@@ -270,7 +284,9 @@ def create_post(body: dict):
             _audit(db, post_id, account_id, "post_created",
                    {"title": title, "scheduled_at": scheduled_at})
             row = db.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
-            created.append(_post_json(row, account))
+            d = _post_json(row, account)
+            d["filename"] = _media_filename(db, media_id)
+            created.append(d)
     return {"posts": created}
 
 
@@ -295,6 +311,7 @@ def list_posts(status: str | None = Query(default=None)):
         out = []
         for r in rows:
             d = _post_json(r)
+            d["filename"] = _media_filename(db, r["media_id"])
             d["account"] = {
                 "id": r["account_id"], "brand": r["_brand"], "platform": r["_platform"],
                 "platform_user_id": r["_puid"], "display_name": r["_dname"],
@@ -311,6 +328,7 @@ def get_post(post_id: int):
         account = _get_account(db, post["account_id"])
         comp = _run_compliance(post, account)
         d = _post_json(post, account)
+        d["filename"] = _media_filename(db, post["media_id"])
     d["compliance"] = comp
     return d
 
@@ -569,6 +587,8 @@ _YT_CALLBACK_OK = """<!DOCTYPE html><html><head><meta charset="utf-8">
 Channel: <strong>{handle}</strong> (<code>{channel}</code>)</p>
 <p>Uploads default to <strong>private</strong> — flip visibility in YouTube Studio.
 You can close this tab and go back to the dashboard.</p>
+<p><button onclick="window.close()" style="font-size:16px;padding:8px 18px;cursor:pointer">Close this tab</button></p>
+<script>setTimeout(function(){{ window.close(); }}, 4000);</script>
 </body></html>"""
 
 _YT_CALLBACK_ERR = """<!DOCTYPE html><html><head><meta charset="utf-8">

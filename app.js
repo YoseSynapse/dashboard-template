@@ -31,9 +31,10 @@ const del = (p) => api("DELETE", p);
 /* ---------- labels ---------- */
 const BRANDS = {
   quiet_position: { name: "Faceless Wicks (Quiet Position)", handle: "@facelesswicksofficial" },
-  the_odds_board: { name: "The Odds Board", handle: "@hqtheoddsboardofficial" },
+  the_odds_board: { name: "The Odds Board", handle: "@OddsBoardofficial" },
   heist:          { name: "heistHQ365", handle: "@Heisthq365official" },
-  jose_personal:  { name: "Jose (personal)", handle: "@yos_ego" }
+  jose_personal:  { name: "Jose (personal)", handle: "@yos_ego" },
+  mh_outlanders:  { name: "MH Outlanders", handle: "@mhoutlanders" }
 };
 const PLATFORMS = {
   tiktok: "TikTok", x: "X", instagram: "Instagram", youtube: "YouTube"
@@ -44,7 +45,8 @@ const BRAND_HINTS = {
   quiet_position: "No broker affiliate links. Educational coverage only. Never promise profits or guaranteed outcomes. Binary-options coverage: honest explainers only, no funnels.",
   the_odds_board: "Zero outbound gambling-operator links. No bonuses, promos, or deposit CTAs. Free community only — no hype, no guarantees. Compliance cornerstone: Jose's own voice-over on faceless content.",
   heist: "Label ALL concept/fan art explicitly ([CONCEPT], [RUMOR]). Everything depicted in the thumbnail must appear in the video. Compliance cornerstone: Jose's own voice-over on faceless content.",
-  jose_personal: "Personal brand — same company compliance rules apply. Affiliate links need clear FTC disclosure."
+  jose_personal: "Personal brand — same company compliance rules apply. Affiliate links need clear FTC disclosure.",
+  mh_outlanders: "Gaming / Monster Hunter Outlanders education lane under the Heist umbrella. Label ALL concept/fan art explicitly ([CONCEPT], [RUMOR]). Credit Capcom/TiMi for official material. No guarantees or promises language."
 };
 
 /* Title formulas are stored flat in composer_data.json, in brand order:

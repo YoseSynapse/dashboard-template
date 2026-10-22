@@ -24,11 +24,11 @@
     </div>
     <div>
       <label for="fStatus" style="margin-top:0">Status</label>
-      <select id="fStatus"><option value="">All statuses</option></select>
+      <select id="fStatus"><option value="">Select a status…</option></select>
     </div>
   </div>
 </div>
-<div id="postsList" class="grid"></div>
+<div id="postsList" class="grid" style="display:none"></div>
 
 <h2>Recent audit events</h2>
 <div id="auditList" class="grid"></div>
@@ -51,6 +51,7 @@
         <option value="the_odds_board">The Odds Board</option>
         <option value="heist">Heist</option>
         <option value="jose_personal">Jose (personal)</option>
+        <option value="mh_outlanders">MH Outlanders</option>
       </select></div>
     <div><label for="newPlatform" style="margin-top:0">Platform</label>
       <select id="newPlatform">
@@ -104,7 +105,7 @@ function renderFilters() {
   bSel.innerHTML = '<option value="">All brands</option>' +
     Object.keys(BRANDS).map(b => '<option value="' + b + '">' + esc(brandLabel(b)) + "</option>").join("");
   const sSel = document.getElementById("fStatus");
-  sSel.innerHTML = '<option value="">All statuses</option>' +
+  sSel.innerHTML = '<option value="">Select a status…</option>' +
     STATUSES.map(s => '<option value="' + s + '">' + esc(s.replace(/_/g, " ")) + "</option>").join("");
   bSel.onchange = renderPosts; sSel.onchange = renderPosts;
 }
@@ -112,10 +113,14 @@ function renderFilters() {
 function renderPosts() {
   const b = document.getElementById("fBrand").value;
   const s = document.getElementById("fStatus").value;
-  const list = ALL_POSTS.filter(p =>
-    (!b || postBrand(p) === b) && (!s || p.status === s)
-  ).slice(0, 30);
   const el = document.getElementById("postsList");
+  // No status selected = no results list rendered (Jose, Oct 18).
+  // Results appear only after a status is picked; Brand filter still applies.
+  if (!s) { el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  const list = ALL_POSTS.filter(p =>
+    (!b || postBrand(p) === b) && (p.status === s)
+  ).slice(0, 30);
   if (!list.length) { el.innerHTML = '<p class="small">No posts match.</p>'; return; }
   el.innerHTML = list.map(p => {
     const card = '<div class="card tight"><div class="row spread"><div>' +
@@ -195,13 +200,15 @@ async function loadYouTube() {
         'Steps: WINDOWS_SETUP.md → “Connect YouTube”.</div>';
     }
     const q = s.quota || {};
-    const used = Number(q.units_used || 0), cap = Number(q.cap || 10000);
-    const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0;
-    html += '<div class="row spread"><div><strong>Daily API quota</strong> <span class="small">' +
+    const allowance = Number(q.upload_allowance || q.daily_upload_allowance || 100);
+    const uploadsToday = q.uploads_today != null ? Number(q.uploads_today) : Math.max(0, allowance - Number(q.uploads_remaining != null ? q.uploads_remaining : allowance));
+    const uploadsLeft = q.uploads_remaining != null ? Number(q.uploads_remaining) : Math.max(0, allowance - uploadsToday);
+    const pct = allowance ? Math.min(100, Math.round((uploadsToday / allowance) * 100)) : 0;
+    html += '<div class="row spread"><div><strong>Daily uploads</strong> <span class="small">' +
       esc(String(q.date || "")) + '</span></div>' +
-      '<div style="font-size:1.2rem;font-weight:700">' + used.toLocaleString() + " / " + cap.toLocaleString() + " units</div></div>" +
+      '<div style="font-size:1.2rem;font-weight:700">' + uploadsToday.toLocaleString() + " / " + allowance.toLocaleString() + " uploads</div></div>" +
       '<div class="meter"><div style="width:' + pct + '%"></div></div>' +
-      '<p class="small">' + Number(q.uploads_remaining || 0) + " uploads left today (each upload = 1,600 units). Testing-mode cap: 10,000 units/day.</p>";
+      '<p class="small">' + uploadsLeft + " uploads left today of the " + allowance + "/day upload allowance (1 unit per upload). Standard API quota: 10,000 units/day, separate.</p>";
     const accs = (s.accounts || []);
     if (!accs.length) {
       html += '<p class="small">No YouTube accounts yet — add one per brand above (“Connected accounts” → Add account → YouTube), then connect it here.</p>';
@@ -232,7 +239,8 @@ async function ytConnect(accountId) {
   const el = document.getElementById("ytPanel");
   try {
     const r = await get("/api/youtube/auth-url?account_id=" + accountId);
-    window.location = r.auth_url; // Google consent → lands back on /api/youtube/callback
+    window.open(r.auth_url, "_blank"); // Jose 2026-10-21: consent opens in a NEW tab — this dashboard tab stays put; the callback success page is that tab, close it when done
+    el.insertAdjacentHTML("afterbegin", '<div class="banner green">Google sign-in opened in a new tab. Finish there, close that tab, then refresh this page — the account will show CONNECTED.</div>');
   } catch (e) { el.insertAdjacentHTML("afterbegin", '<div class="banner red">⚠️ ' + esc(e.message) + "</div>"); }
 }
 

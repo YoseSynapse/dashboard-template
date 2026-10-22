@@ -21,7 +21,8 @@ Validations (active in BOTH mock and real mode): title <= 100 chars,
 description <= 5000 chars. scheduled_at is normalized to RFC3339 UTC
 (naive ISO strings are assumed UTC -- documented).
 
-Quota: videos.insert costs 1600 units against a 10,000/day testing cap.
+Quota: uploads cost 1 unit each against their own 100/day upload
+allowance; the project's standard 10,000 units/day quota is separate.
 The adapter refuses when today has no room and records usage on success.
 """
 
@@ -85,8 +86,9 @@ class YouTubeAdapter(BaseAdapter):
     # handle instead of blindly taking channels.list's first item.
     BRAND_CHANNEL_HANDLES = {
         "heist": "@Heisthq365official",
-        "the_odds_board": "@OddsBoard",
+        "the_odds_board": "@OddsBoardofficial",
         "quiet_position": "@facelesswicksofficial",
+        "mh_outlanders": "@huntersvaultofficial",
     }
 
     def __init__(self, client_factory=None):
@@ -300,9 +302,9 @@ class YouTubeAdapter(BaseAdapter):
                          "missing or not a file: %r" % (media_path,))
         from app import youtube_quota
         if not youtube_quota.has_capacity():
-            return _fail("YouTube daily quota is exhausted "
-                         "(%d units/day; uploads cost %d). Try again tomorrow."
-                         % (youtube_quota.DAILY_CAP_UNITS,
+            return _fail("YouTube daily upload allowance is exhausted "
+                         "(%d uploads/day; each upload costs %d unit). Try again tomorrow."
+                         % (youtube_quota.DAILY_UPLOAD_ALLOWANCE,
                             youtube_quota.UPLOAD_COST_UNITS))
         try:
             result = self._publish_real(token, post, media_path)
