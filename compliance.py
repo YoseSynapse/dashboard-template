@@ -12,6 +12,13 @@ Note: the Heist concept/fan-art label rule depends on the post's
 (``heist_label_warning``) where the stored flag is available.
 """
 
+import re
+
+try:  # Rotation windows live in app/rotation.py (Patch Pack #3).
+    from . import rotation as _rotation
+except Exception:  # pragma: no cover - defensive, mirrors scheduler imports
+    _rotation = None
+
 # --- Quiet Position: no binary/broker/affiliate content (highest-risk item) ---
 _QP_BLOCKS = [
     "pocket option",
@@ -111,12 +118,49 @@ def _haystack(title, caption, hashtags) -> str:
     return " ".join(str(p) for p in parts).lower()
 
 
+# --- Unfilled template placeholders (all brands) ---
+# Bracketed tokens like [topic] / [unexpected fact] are kit scaffolding that
+# must be replaced with real copy before a post can ship (an unfilled
+# "[unexpected fact] about [topic]" tail shipped in OB-04's caption).
+# [CONCEPT] and [RUMOR] are NOT placeholders — they are the required labels
+# on Heist content — so they are allowlisted. "[Links — to be added]" IS a
+# placeholder: the real link block must replace it.
+_PLACEHOLDER_RE = re.compile(r"\[([^\[\]\n]{1,80})\]")
+_PLACEHOLDER_ALLOWLIST = {"concept", "rumor"}
+
+
+def find_placeholders(title, caption, hashtags) -> list:
+    """Bracketed template tokens still unfilled, in original case, de-duped."""
+    parts = [title or "", caption or ""]
+    parts.extend(str(h) for h in (hashtags or []))
+    found: list = []
+    seen: set = set()
+    for m in _PLACEHOLDER_RE.finditer(" ".join(parts)):
+        token = m.group(1).strip()
+        if token.lower() in _PLACEHOLDER_ALLOWLIST or token.lower() in seen:
+            continue
+        seen.add(token.lower())
+        found.append(m.group(0))
+    return found
+
+
 def check_post(brand: str, title: str, caption: str, hashtags: list) -> dict:
     """Run brand rules. Returns {"blocks": [...], "warnings": [...]}."""
     brand = (brand or "").lower()
     hay = _haystack(title, caption, hashtags)
     blocks: list = []
     warnings: list = []
+
+    for tok in find_placeholders(title, caption, hashtags):
+        blocks.append(
+            {
+                "rule": "unfilled_placeholder",
+                "message": (
+                    f"Unfilled template placeholder '{tok}' — replace it with "
+                    "real copy; a post cannot be approved while it remains."
+                ),
+            }
+        )
 
     for phrase in _BLOCK_FINGERPRINTS.get(brand, []):
         if phrase in hay:
@@ -194,4 +238,32 @@ def heist_label_warning(labels_concept_art: bool) -> dict | None:
     return {
         "rule": "heist_concept_art_label",
         "message": "Heist posts must label concept/fan art — tick the label checkbox.",
+    }
+
+
+def check_rotation_slot(platform: str, brand: str, scheduled_at) -> dict | None:
+    """YouTube rotation rule (Jose, 2026-10-12): rotating brands post in two
+    daily PT windows on a 3-day cycle (see app/rotation.py). Returns a
+    WARNING item when a YouTube post's scheduled PT time falls outside
+    that date's windows (+/-30 min grace), else None. Warning only —
+    never a block; Jose can approve anyway. Exempt: non-YouTube posts,
+    unscheduled posts, and brands with no rotation (MH, personal)."""
+    if _rotation is None or (platform or "").lower() != "youtube":
+        return None
+    info = _rotation.check_slot(brand, scheduled_at)
+    if info is None:
+        return None
+    pt = info["pt"]
+    wins = " and ".join(_rotation.format_time(w) for w in info["windows"])
+    brand_name = (brand or "").replace("_", " ").title()
+    pt_time = pt.strftime("%I:%M %p").lstrip("0")
+    pt_day = pt.strftime("%a, %b ") + str(pt.day)
+    return {
+        "rule": "youtube_rotation_slot",
+        "message": (
+            f"Scheduled {pt_time} PT on {pt_day} is outside {brand_name}'s "
+            f"YouTube rotation windows for cycle day {info['cycle_day']} "
+            f"({wins} PT, ±{_rotation.GRACE_MINUTES} min grace). Reschedule "
+            "into a window — or approve anyway; this is a warning, not a block."
+        ),
     }

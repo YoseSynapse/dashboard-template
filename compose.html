@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Compose — V.R World Media</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 <nav class="nav" id="nav"></nav>
@@ -73,6 +73,7 @@
     <label for="schedInput">Scheduled time</label>
     <input type="datetime-local" id="schedInput">
     <p class="small">YouTube uses native publishAt; TikTok, X and Instagram publish when the scheduler fires at/after this time.</p>
+    <p class="small" id="rotationHint"></p>
   </div>
 </div>
 
@@ -90,7 +91,7 @@
 
 <footer>V.R World Media · owned publishing hub · localhost only</footer>
 
-<script src="app.js"></script>
+<script src="js/app.js"></script>
 <script>
 renderNav("compose.html");
 
@@ -121,8 +122,12 @@ const $ = (id) => document.getElementById(id);
   renderHookPicker();
   $("mediaIdInput").oninput = renderMediaPreview;
   document.querySelectorAll('input[name="timing"]').forEach(r => {
-    r.onchange = () => { $("scheduleBox").style.display = r.value === "schedule" && r.checked ? "block" : "none"; };
+    r.onchange = () => {
+      $("scheduleBox").style.display = r.value === "schedule" && r.checked ? "block" : "none";
+      updateRotationHint();
+    };
   });
+  $("schedInput").addEventListener("change", () => { updateRotationHint(); runChecks(); });
   ["titleInput", "captionInput", "hashtagInput"].forEach(id => {
     $(id).addEventListener("input", debounce(runChecks, 600));
   });
@@ -167,7 +172,7 @@ function renderBrandPick() {
     '<span class="t"><strong>' + esc(brandLabel(b)) + "</strong> " + esc(BRANDS[b].handle) + "</span></label>"
   ).join("");
   document.querySelectorAll('input[name="cbrand"]').forEach(r => {
-    r.onchange = () => { SEL_BRAND = r.value; renderAccountPick(); renderFormulaPicker(); runChecks(); };
+    r.onchange = () => { SEL_BRAND = r.value; renderAccountPick(); renderFormulaPicker(); runChecks(); updateRotationHint(); };
   });
   const pre = PRE_ACCOUNTS;
   renderAccountPick(pre);
@@ -297,7 +302,15 @@ async function runChecks() {
   if (!SEL_BRAND) { out.innerHTML = '<p class="small">Pick a brand first.</p>'; return; }
   let blocks = [], warnings = [];
   try {
-    const r = await post("/api/compliance/check", { brand: SEL_BRAND, title, caption, hashtags: tags });
+    const payload = { brand: SEL_BRAND, title, caption, hashtags: tags };
+    if (selectedPlatforms().includes("youtube")) {
+      payload.platform = "youtube";
+      const timing = document.querySelector('input[name="timing"]:checked');
+      if (timing && timing.value === "schedule" && $("schedInput").value) {
+        payload.scheduled_at = new Date($("schedInput").value).toISOString();
+      }
+    }
+    const r = await post("/api/compliance/check", payload);
     blocks = r.blocks || []; warnings = r.warnings || [];
   } catch (e) {
     out.innerHTML = '<div class="banner amber">Compliance service unreachable: ' + esc(e.message) + "</div>";
@@ -319,6 +332,25 @@ async function runChecks() {
   out.innerHTML = html;
   updateSubmitState();
 }
+/* ---------- rotation window hint ---------- */
+async function updateRotationHint() {
+  const el = $("rotationHint");
+  if (!el) return;
+  const timing = document.querySelector('input[name="timing"]:checked');
+  if (!SEL_BRAND || !timing || timing.value !== "schedule" || !$("schedInput").value) {
+    el.textContent = "";
+    return;
+  }
+  try {
+    const r = await get("/api/rotation/windows?brand=" + encodeURIComponent(SEL_BRAND) +
+      "&date=" + encodeURIComponent($("schedInput").value.slice(0, 10)));
+    el.textContent = r.exempt
+      ? "No YouTube rotation set for this brand — any time is fine."
+      : "YouTube rotation — cycle day " + r.cycle_day + ": windows " + r.windows_pt.join(" and ") +
+        " PT (±" + r.grace_minutes + " min grace). Off-window times warn at submit/approve, never block.";
+  } catch (e) { el.textContent = ""; }
+}
+
 function updateSubmitState() {
   const heistBlock = SEL_BRAND === "heist" && !($("conceptCheck") && $("conceptCheck").checked);
   $("submitBtn").disabled = !DRAFT_ID || SUBMITTED || LAST_BLOCKS.length > 0 || heistBlock;
@@ -363,6 +395,7 @@ async function loadDraft(postId) {
   }
   updateSubmitState();
   updateDeleteBtn();
+  updateRotationHint();
 }
 
 /* ---------- save & submit ---------- */

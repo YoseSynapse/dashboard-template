@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import compliance as compliance_mod
 from . import db as dbmod
+from . import rotation as rotation_mod
 from . import tokenstore
 from . import youtube_quota
 from . import yt_oauth
@@ -25,7 +26,7 @@ log = logging.getLogger("vrwm.routes")
 router = APIRouter()
 
 BRANDS = {"quiet_position", "the_odds_board", "heist", "jose_personal", "mh_outlanders"}
-PLATFORMS = {"tiktok", "x", "instagram", "youtube"}
+PLATFORMS = {"tiktok", "x", "instagram", "youtube", "facebook", "threads", "snapchat"}
 
 _URL_RE = re.compile(r"https?://|www\.")
 
@@ -145,6 +146,11 @@ def _run_compliance(post_row, account_row) -> dict:
     label_warn = compliance_mod.heist_label_warning(bool(post_row["labels_concept_art"]))
     if account_row["brand"] == "heist" and label_warn:
         result["warnings"].append(label_warn)
+    slot_warn = compliance_mod.check_rotation_slot(
+        account_row["platform"], account_row["brand"], post_row["scheduled_at"]
+    )
+    if slot_warn:
+        result["warnings"].append(slot_warn)
     return result
 
 
@@ -373,6 +379,20 @@ def approve_post(post_id: int, body: dict | None = None):
                 status_code=409,
                 detail=f"cannot approve a post with status '{post['status']}'",
             )
+        # Re-run compliance at the gate (mirrors submit_post): a post edited
+        # after submit must not slip a block — e.g. an unfilled placeholder —
+        # through approval.
+        account = _get_account(db, post["account_id"])
+        comp = _run_compliance(post, account)
+        if comp["blocks"]:
+            _audit(db, post_id, post["account_id"], "approve_blocked",
+                   {"blocks": comp["blocks"]})
+            db.commit()
+            return JSONResponse(
+                status_code=422,
+                content={"ok": False, "errors": comp["blocks"],
+                         "warnings": comp["warnings"], "status": post["status"]},
+            )
         db.execute(
             "UPDATE posts SET status = 'approved', updated_at = ? WHERE id = ?",
             (now, post_id),
@@ -383,7 +403,6 @@ def approve_post(post_id: int, body: dict | None = None):
             (post_id, note, now),
         )
         _audit(db, post_id, post["account_id"], "approved", {"note": note})
-        account = _get_account(db, post["account_id"])
         row = db.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
     return {"ok": True, "status": "approved", "post": _post_json(row, account)}
 
@@ -426,6 +445,35 @@ def delete_post(post_id: int):
     return {"ok": True}
 
 
+@router.patch("/api/posts/{post_id}")
+def update_post(post_id: int, body: dict):
+    """Edit title/caption/hashtags in place (Approve screen). Only while the
+    post is draft or pending_approval (409 otherwise) — approved and later
+    posts are locked so history can't be rewritten after the decision."""
+    with dbmod.get_db() as db:
+        post = _get_post(db, post_id)
+        if post["status"] not in ("draft", "pending_approval"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"cannot edit a post with status '{post['status']}'",
+            )
+        body = body or {}
+        title = body.get("title", post["title"])
+        caption = body.get("caption", post["caption"])
+        hashtags = body.get("hashtags", _parse_hashtags(post["hashtags"]))
+        now = _utcnow_iso()
+        db.execute(
+            "UPDATE posts SET title = ?, caption = ?, hashtags = ?, updated_at = ?"
+            " WHERE id = ?",
+            (title, caption, json.dumps(hashtags), now, post_id),
+        )
+        _audit(db, post_id, post["account_id"], "post_edited",
+               {"title": title})
+        account = _get_account(db, post["account_id"])
+        row = db.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+    return {"ok": True, "post": _post_json(row, account)}
+
+
 # ---------------------------------------------------------------- compliance
 
 @router.post("/api/compliance/check")
@@ -446,7 +494,39 @@ def compliance_check(body: dict):
         warn = compliance_mod.heist_label_warning(bool(body.get("labels_concept_art")))
         if warn:
             result["warnings"].append(warn)
+    if platform == "youtube" and body.get("scheduled_at"):
+        slot_warn = compliance_mod.check_rotation_slot(
+            platform, brand, body.get("scheduled_at")
+        )
+        if slot_warn:
+            result["warnings"].append(slot_warn)
     return result
+
+
+@router.get("/api/rotation/windows")
+def rotation_windows(brand: str = Query(...), date: str | None = Query(default=None)):
+    """Read-only guidance: a brand's two YouTube rotation windows (PT) for a
+    date (default: today PT). Exempt brands return windows=null."""
+    brand = (brand or "").lower()
+    if brand not in BRANDS:
+        raise HTTPException(status_code=400, detail=f"brand must be one of {sorted(BRANDS)}")
+    if date:
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    else:
+        d = rotation_mod.to_pacific(datetime.now(timezone.utc)).date()
+    wins = rotation_mod.windows_for(brand, d)
+    return {
+        "brand": brand,
+        "date": d.isoformat(),
+        "cycle_day": rotation_mod.cycle_day(d),
+        "windows": wins,
+        "windows_pt": [rotation_mod.format_time(w) for w in wins] if wins else None,
+        "grace_minutes": rotation_mod.GRACE_MINUTES,
+        "exempt": wins is None,
+    }
 
 
 # ---------------------------------------------------------------- composer data

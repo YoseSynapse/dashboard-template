@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approve — V.R World Media</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+
+<h1>Approval queue</h1>
+<p class="small">Nothing posts without your approval. Review everything — title, caption, media, timing — then approve or reject with a note.</p>
+
+<div id="queue" class="grid"></div>
+
+<footer>V.R World Media · owned publishing hub · localhost only</footer>
+
+<script src="js/app.js"></script>
+<script>
+renderNav("approve.html");
+
+async function load() {
+  const el = document.getElementById("queue");
+  try {
+    const list = await get("/api/posts?status=pending_approval");
+    if (!list.length) { el.innerHTML = '<div class="card"><p>Queue is empty. 🎉</p><p class="small">New submissions from the composer appear here.</p></div>'; return; }
+    el.innerHTML = list.map(cardHTML).join("");
+    list.forEach(p => {
+      document.getElementById("ap-" + p.id).onclick = () => decide(p.id, "approve");
+      document.getElementById("rj-" + p.id).onclick = () => decide(p.id, "reject");
+      document.getElementById("sv-" + p.id).onclick = () => saveEdits(p.id);
+    });
+    // pull full detail (live compliance warnings) for each
+    list.forEach(async (p) => {
+      try {
+        const d = await get("/api/posts/" + encodeURIComponent(p.id));
+        const compWarns = (d.compliance && d.compliance.warnings) || [];
+        const slot = document.getElementById("warn-" + p.id);
+        if (slot && compWarns.length) {
+          slot.innerHTML = '<div class="banner amber"><span class="rule">⚠️ ' + compWarns.length + " warning(s) on file:</span><ul class='findings'>" +
+            compWarns.map(w => "<li><strong>" + esc(w.rule || "") + ":</strong> " + esc(w.message || "") + "</li>").join("") + "</ul></div>";
+        }
+        const prev = document.getElementById("prev-" + p.id);
+        if (prev && d.filename) prev.innerHTML = mediaPreviewHTML(d.filename, "small");
+      } catch (e) { /* detail is best-effort */ }
+    });
+  } catch (e) { showError("queue", e); }
+}
+
+function cardHTML(p) {
+  const plats = postPlatforms(p).map(platformLabel).join(", ");
+  return '<div class="card" id="card-' + esc(p.id) + '">' +
+    '<div class="row spread"><div><strong>Post #' + esc(p.id) + "</strong> · " + esc(brandLabel(postBrand(p))) +
+    " · " + esc(plats || "—") + "</div>" + statusPill(p.status) + "</div>" +
+    '<label for="title-' + esc(p.id) + '">Title</label>' +
+    '<input type="text" id="title-' + esc(p.id) + '" value="' + esc(p.title || "") + '">' +
+    '<div id="warn-' + esc(p.id) + '"></div>' +
+    '<div id="prev-' + esc(p.id) + '">' + mediaPreviewHTML(p.filename, "small") + "</div>" +
+    '<label for="caption-' + esc(p.id) + '">Caption</label>' +
+    '<textarea id="caption-' + esc(p.id) + '">' + esc(p.caption || "") + "</textarea>" +
+    '<label for="tags-' + esc(p.id) + '">Hashtags (comma-separated)</label>' +
+    '<input type="text" id="tags-' + esc(p.id) + '" value="' + esc((p.hashtags || []).join(", ")) + '">' +
+    (p.thumbnail_notes ? '<p class="small"><strong>Thumbnail notes:</strong><br>' + esc(p.thumbnail_notes).replace(/\n/g, "<br>") + "</p>" : "") +
+    '<p class="small">Scheduled: <strong>' + fmtDate(p.scheduled_at) + "</strong> (null = publish on next scheduler tick)" +
+    (p.labels_concept_art ? ' · <span class="tag">concept art labeled ✓</span>' : "") + "</p>" +
+    '<label for="note-' + esc(p.id) + '">Decision note</label>' +
+    '<input type="text" id="note-' + esc(p.id) + '" placeholder="optional note…">' +
+    '<div class="row" style="margin-top:8px">' +
+    '<button class="btn good" id="ap-' + esc(p.id) + '">✔ Approve</button>' +
+    '<button class="btn danger" id="rj-' + esc(p.id) + '">✖ Reject</button>' +
+    '<button class="btn" id="sv-' + esc(p.id) + '">💾 Save edits</button>' +
+    '<span class="small" id="svmsg-' + esc(p.id) + '"></span>' +
+    "</div></div>";
+}
+
+async function saveEdits(id) {
+  const tags = document.getElementById("tags-" + id).value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+  try {
+    await patch("/api/posts/" + encodeURIComponent(id), {
+      title: document.getElementById("title-" + id).value,
+      caption: document.getElementById("caption-" + id).value,
+      hashtags: tags,
+    });
+    document.getElementById("svmsg-" + id).textContent = "Saved ✔";
+  } catch (e) { alert(e.message); }
+}
+
+async function decide(id, action) {
+  const note = document.getElementById("note-" + id).value.trim();
+  if (action === "reject" && !note) {
+    if (!confirm("Reject without a note? The creator will want to know why.")) return;
+  }
+  try {
+    await post("/api/posts/" + encodeURIComponent(id) + "/" + action, { note });
+    document.getElementById("card-" + id).innerHTML =
+      '<div class="banner ' + (action === "approve" ? "green" : "amber") + '">Post #' + esc(id) + " " +
+      (action === "approve" ? "approved ✔" : "rejected — back to draft.") + "</div>";
+  } catch (e) {
+    // Approve re-runs compliance server-side; on a 422, pull the live
+    // compliance detail and show the exact blocks in the card.
+    if (action === "approve") {
+      try {
+        const d = await get("/api/posts/" + encodeURIComponent(id));
+        const blocks = (d.compliance && d.compliance.blocks) || [];
+        const slot = document.getElementById("warn-" + id);
+        if (slot && blocks.length) {
+          slot.innerHTML = '<div class="banner red"><span class="rule">⛔ Approve blocked:</span><ul class="findings">' +
+            blocks.map(b => "<li><strong>" + esc(b.rule || "") + ":</strong> " + esc(b.message || "") + "</li>").join("") + "</ul></div>";
+          return;
+        }
+      } catch (_) { /* detail is best-effort — fall through to the alert */ }
+    }
+    alert(e.message);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
